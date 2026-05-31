@@ -1,175 +1,44 @@
 import urllib.request
 import json
-import concurrent.futures
 import re
-import sys
 import os
 import ssl
-import time
+import sys
 
-# Bypass local SSL certificate validation errors
 ssl._create_default_https_context = ssl._create_unverified_context
 sys.stdout.reconfigure(encoding='utf-8')
 
-# Ultra Sun exclusives to exclude
-ULTRA_SUN_EXCLUSIVES = {
-    # Standard & forms
-    "houndour", "houndoom", "cranidos", "rampardos", "cottonee", "whimsicott",
-    "tirtouga", "carracosta", "rufflet", "braviary", "passimian", "turtonator",
-    "omanyte", "omastar", "anorith", "armaldo", "golett", "golurk",
-    "clauncher", "clawitzer", "tyrunt", "tyrantrum",
-    "vulpix-alola", "ninetales-alola",
-    # Legendaries / UBs
-    "buzzwole", "kartana", "blacephalon", "solgaleo",
-    "ho-oh", "raikou", "groudon", "latios", "dialga", "heatran", "reshiram", "tornadus", "xerneas"
-}
+def fetch_json(url, retries=5, delay=1.5):
+    for i in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            if i == retries - 1:
+                raise e
+            import time
+            time.sleep(delay)
 
-STARTER_SPECIES = {
-    "rowlet", "dartrix", "decidueye", "litten", "torracat", "incineroar", "popplio", "brionne", "primarina",
-    # Island Scan starters
-    "bulbasaur", "ivysaur", "venusaur", "charmander", "charmeleon", "charizard", "squirtle", "wartortle", "blastoise",
-    "treecko", "grovyle", "sceptile", "torchic", "combusken", "blaziken", "mudkip", "marshtomp", "swampert",
-    "turtwig", "grotle", "torterra", "chimchar", "monferno", "infernape", "piplup", "prinplup", "empoleon",
-    "snivy", "servine", "serperior", "tepig", "pignite", "emboar", "oshawott", "dewott", "samurott",
-    "chespin", "quilladin", "chesnaught", "fennekin", "braixen", "delphox", "froakie", "frogadier", "greninja"
-}
+def graphql_query(query):
+    req = urllib.request.Request(
+        'https://beta.pokeapi.co/graphql/v1beta',
+        data=json.dumps({'query': query}).encode('utf-8'),
+        headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return json.loads(response.read())
 
-LEGENDARY_SPECIES = {
-    "cosmog", "cosmoem", "solgaleo", "lunala", "necrozma",
-    "tapu-koko", "tapu-lele", "tapu-bulu", "tapu-fini",
-    "nihilego", "buzzwole", "pheromosa", "xurkitree", "celesteela", "kartana", "guzzlord",
-    "poipole", "naganadel", "stakataka", "blacephalon",
-    "magearna", "marshadow", "zeraora",
-    # Ultra Space Wilds legendaries available in Ultra Moon
-    "mewtwo", "articuno", "zapdos", "moltres", "lugia", "entei", "suicune", "kyogre", "latias", "palkia", "regigigas", "giratina", "cresselia", "cobalion", "terrakion", "virizion", "thundurus", "zekrom", "yveltal", "zygarde", "regirock", "regice", "registeel", "rayquaza", "landorus", "kyurem"
-}
-
-EXTRA_UM_SPECIES = [
-    # USW Legendaries (Kyogre, Palkia, Lugia, Entei, Zekrom, Yveltal, Latias, Regigigas, Thundurus, etc.)
-    "mewtwo", "articuno", "zapdos", "moltres", "lugia", "entei", "suicune", "kyogre", "latias", "palkia", "regigigas", "thundurus", "zekrom", "yveltal", 
-    "regirock", "regice", "registeel", "uxie", "mesprit", "azelf", "cresselia", "cobalion", "terrakion", "virizion", "rayquaza", "giratina", "landorus", "kyurem",
-    # Island Scan base species & families
-    "bulbasaur", "ivysaur", "venusaur",
-    "charmander", "charmeleon", "charizard",
-    "squirtle", "wartortle", "blastoise",
-    "weedle", "kakuna", "beedrill",
-    "pidgey", "pidgeotto", "pidgeot",
-    "onix", "steelix",
-    "horsea", "seadra", "kingdra",
-    "rhyhorn", "rhydon", "rhyperior",
-    "ralts", "kirlia", "gardevoir", "gallade",
-    "aron", "lairon", "aggron",
-    "spheal", "sealeo", "walrein",
-    "swinub", "piloswine", "mamoswine",
-    "rotom",
-    "sewaddle", "swadloon", "leavanny",
-    "litwick", "lampent", "chandelure",
-    "axew", "fraxure", "haxorus",
-    "honedge", "doublade", "aegislash",
-    "scatterbug", "spewpa", "vivillon",
-    "treecko", "grovyle", "sceptile",
-    "torchic", "combusken", "blaziken",
-    "mudkip", "marshtomp", "swampert",
-    "turtwig", "grotle", "torterra",
-    "chimchar", "monferno", "infernape",
-    "piplup", "prinplup", "empoleon",
-    "snivy", "servine", "serperior",
-    "tepig", "pignite", "emboar",
-    "oshawott", "dewott", "samurott",
-    "tynamo", "eelektrik", "eelektross",
-    "chespin", "quilladin", "chesnaught",
-    "fennekin", "braixen", "delphox",
-    "froakie", "frogadier", "greninja"
-]
-
-SPECIAL_OBTAIN = {
-    # USW Legendaries
-    "mewtwo": "Ультра-пространство (зеленый портал)",
-    "articuno": "Ультра-пространство (красный портал)",
-    "zapdos": "Ультра-пространство (красный портал)",
-    "moltres": "Ультра-пространство (красный портал)",
-    "lugia": "Ультра-пространство (красный портал, эксклюзив Ultra Moon)",
-    "entei": "Ультра-пространство (зеленый портал, эксклюзив Ultra Moon)",
-    "suicune": "Ультра-пространство (зеленый портал, требуется наличие Энтея и Райкоу)",
-    "kyogre": "Ультра-пространство (синий портал, эксклюзив Ultra Moon)",
-    "latias": "Ультра-пространство (синий портал, эксклюзив Ultra Moon)",
-    "palkia": "Ультра-пространство (синий портал, эксклюзив Ultra Moon)",
-    "regigigas": "Ультра-пространство (желтый портал, эксклюзив Ultra Moon)",
-    "thundurus": "Ультра-пространство (красный портал, эксклюзив Ultra Moon)",
-    "zekrom": "Ультра-пространство (красный портал, эксклюзив Ultra Moon)",
-    "yveltal": "Ультра-пространство (красный портал, эксклюзив Ultra Moon)",
-    "regirock": "Ультра-пространство (желтый портал)",
-    "regice": "Ультра-пространство (желтый портал)",
-    "registeel": "Ультра-пространство (желтый портал)",
-    "uxie": "Ультра-пространство (синий портал)",
-    "mesprit": "Ультра-пространство (синий портал)",
-    "azelf": "Ультра-пространство (синий портал)",
-    "cresselia": "Ультра-пространство (синий портал)",
-    "cobalion": "Ультра-пространство (зеленый портал)",
-    "terrakion": "Ультра-пространство (зеленый портал)",
-    "virizion": "Ультра-пространство (зеленый портал)",
-    "rayquaza": "Ультра-пространство (синий портал, требуется наличие Кайогра и Гроудона)",
-    "giratina": "Ультра-пространство (синий портал, требуется наличие Палкии и Диалги)",
-    "landorus": "Ультра-пространство (красный портал, требуется наличие Торнадуса и Тандуруса)",
-    "kyurem": "Ультра-пространство (красный портал, требуется наличие Реширама и Зекрома)",
-    # Island Scan Melemele
-    "squirtle": "Островное сканирование (Мелемеле, Понедельник, Залив Калаэ)",
-    "onix": "Островное сканирование (Мелемеле, Вторник, Холм Десяти Карат)",
-    "horsea": "Островное сканирование (Мелемеле, Среда, Залив Калаэ)",
-    "scatterbug": "Островное сканирование (Мелемеле, Четверг, Маршрут 1)",
-    "bulbasaur": "Островное сканирование (Мелемеле, Пятница, Маршрут 2)",
-    "litwick": "Островное сканирование (Мелемеле, Суббота, Кладбище Хауоли)",
-    "charmander": "Островное сканирование (Мелемеле, Воскресенье, Вулкан Вела)",
-    # Island Scan Akala
-    "spheal": "Островное сканирование (Акала, Понедельник, Залив Хано)",
-    "combusken": "Островное сканирование (Акала, Вторник, Маршрут 8)",
-    "honedge": "Островное сканирование (Акала, Среда, Окраины Акала)",
-    "beedrill": "Островное сканирование (Акала, Четверг, Маршрут 4)",
-    "grovyle": "Островное сканирование (Акала, Пятница, Маршрут 5)",
-    "marshtomp": "Островное сканирование (Акала, Суббота, Маршрут 6)",
-    "ralts": "Островное сканирование (Акала, Воскресенье, Маршрут 6)",
-    # Island Scan Ula'ula
-    "swinub": "Островное сканирование (Улаула, Понедельник, Маршрут 13)",
-    "prinplup": "Островное сканирование (Улаула, Вторник, Маршрут 12)",
-    "grotle": "Островное сканирование (Улаула, Среда, Маршрут 10)",
-    "pidgeot": "Островное сканирование (Улаула, Четверг, Маршрут 10)",
-    "monferno": "Островное сканирование (Улаула, Пятница, Маршрут 11)",
-    "axew": "Островное сканирование (Улаула, Суббота, Гора Хокулани)",
-    "rhyhorn": "Островное сканирование (Улаула, Воскресенье, Гора Блаш)",
-    # Island Scan Poni
-    "aggron": "Островное сканирование (Пони, Понедельник, Каньон Пони)",
-    "rotom": "Островное сканирование (Пони, Вторник, Каньон Пони)",
-    "leavanny": "Островное сканирование (Пони, Среда, Луг Пони)",
-    "chesnaught": "Островное сканирование (Пони, Четверг, Дикие земли Пони)",
-    "greninja": "Островное сканирование (Пони, Пятница, Побережье Пони)",
-    "delphox": "Островное сканирование (Пони, Суббота, Древний путь Пони)",
-    "eelektross": "Островное сканирование (Пони, Воскресенье, Роща Пони)",
-}
-
-PRE_EVOLUTION_PARENTS = {
-    "treecko": "grovyle",
-    "torchic": "combusken",
-    "mudkip": "marshtomp",
-    "turtwig": "grotle",
-    "chimchar": "monferno",
-    "piplup": "prinplup",
-    "snivy": "servine",
-    "tepig": "pignite",
-    "oshawott": "dewott",
-    "chespin": "quilladin",
-    "fennekin": "braixen",
-    "froakie": "frogadier",
-    "weedle": "kakuna",
-    "pidgey": "pidgeotto",
-    "aron": "lairon",
-    "sewaddle": "swadloon",
-    "tynamo": "eelektrik",
-}
-
-# Location Translations
 LOCATION_RU = {
-    "Alola Route": "Маршрут Алола",
+    "Area": "",
+    "South": "(юг)",
+    "North": "(север)",
+    "West": "(запад)",
+    "East": "(восток)",
+    "Pallet Town": "Паллет Таун",
+    "Cerulean City": "Серулин Сити",
     "Route": "Маршрут",
+    "Alola Route": "Маршрут Алола",
     "Melemele Sea": "Море Мелемеле",
     "Iki Town": "Ики Таун",
     "Mahalo Trail": "Тропа Махало",
@@ -221,223 +90,238 @@ LOCATION_RU = {
     "Exeggutor Island": "Остров Экзеггуторов"
 }
 
+METHOD_RU = {
+    'walk': 'в траве',
+    'old-rod': 'старая удочка',
+    'good-rod': 'хорошая удочка',
+    'super-rod': 'супер удочка',
+    'surf': 'на воде',
+    'rock-smash': 'разбивание камней',
+    'headbutt': 'удар головой',
+    'dark-grass': 'в темной траве',
+    'grass-spots': 'в пятнах травы',
+    'cave-spots': 'в пятнах пещеры',
+    'bridge-spots': 'на мосту',
+    'super-rod-spots': 'супер удочка (пятна)',
+    'surf-spots': 'на воде (пятна)',
+    'yellow-flowers': 'в желтых цветах',
+    'purple-flowers': 'в фиолетовых цветах',
+    'red-flowers': 'в красных цветах',
+    'rough-terrain': 'на неровной местности',
+    'gift': 'в подарок',
+    'gift-egg': 'в подарок (яйцо)',
+    'only-one': 'только один',
+    'pokeflute': 'покэфлейта',
+    'headbutt-low': 'удар головой (низкий)',
+    'headbutt-normal': 'удар головой (обычный)',
+    'headbutt-high': 'удар головой (высокий)',
+    'squirt-bottle': 'бутылка с водой',
+    'wailmer-pail': 'ведро Вейлмера',
+    'seaweed': 'водоросли',
+    'roaming-grass': 'блуждающий (в траве)',
+    'roaming-water': 'блуждающий (на воде)',
+    'devon-scope': 'девон-прицел',
+    'feebas-tile-fishing': 'рыбалка на клетке Фибаса',
+    'island-scan': 'островное сканирование',
+    'sos-encounter': 'sos-вызов',
+    'bubbling-spots': 'пузырящиеся пятна',
+    'berry-piles': 'кучи ягод',
+    'npc-trade': 'обмен с NPC',
+    'sos-from-bubbling-spot': 'sos-вызов из пузырящегося пятна'
+}
+
 def translate_location(loc_name):
-    loc_name = loc_name.replace("Area", "").replace("South", "(юг)").replace("North", "(север)").replace("West", "(запад)").replace("East", "(восток)")
-    loc_name = re.sub(r'\s+', ' ', loc_name).strip()
+    loc_name = loc_name.replace("-", " ").title()
     for eng, ru in LOCATION_RU.items():
         loc_name = re.sub(rf'\b{eng}\b', ru, loc_name, flags=re.IGNORECASE)
+    loc_name = re.sub(r'\s+', ' ', loc_name).strip()
     return loc_name
 
-def clean_name(name):
-    return name.replace("-", " ").title()
+def translate_method(method_name):
+    return METHOD_RU.get(method_name, method_name)
 
-def fetch_json(url, retries=5, delay=1.5):
-    for i in range(retries):
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return json.loads(resp.read().decode('utf-8'))
-        except Exception as e:
-            if i == retries - 1:
-                raise e
-            print(f"Retrying {url} in {delay}s due to error: {e}")
-            time.sleep(delay)
-
-def get_pokemon_data(entry):
-    species_name = entry['pokemon_species']['name']
-    species_url = entry['pokemon_species']['url']
-    
-    if species_name in ULTRA_SUN_EXCLUSIVES:
-        return None
-
-    try:
-        species_data = fetch_json(species_url)
-    except Exception as e:
-        print(f"Error fetching species {species_name}: {e}")
-        return None
-
-    species_id = species_data['id']
-
-    # Check for Alolan forms in varieties
-    is_alolan = False
-    pokemon_id = species_id
-    for var in species_data.get('varieties', []):
-        var_name = var['pokemon']['name']
-        if var_name.endswith('-alola'):
-            is_alolan = True
-            var_url = var['pokemon']['url']
-            m_var = re.search(r'/pokemon/(\d+)/', var_url)
-            if m_var:
-                pokemon_id = int(m_var.group(1))
-            break
-
-    if is_alolan and f"{species_name}-alola" in ULTRA_SUN_EXCLUSIVES:
-        return None
-
-    # Determine category
-    category = "Интернациональный"
-    if species_name in STARTER_SPECIES:
-        category = "Стартовый"
-    elif species_name in LEGENDARY_SPECIES:
-        category = "Легендарный"
-    elif is_alolan or (species_id >= 722 and species_id <= 807):
-        category = "Региональный"
-
-    # Determine obtain method
-    obtain_method = "Неизвестно"
-    if species_name in SPECIAL_OBTAIN:
-        obtain_method = SPECIAL_OBTAIN[species_name]
-    elif species_name in PRE_EVOLUTION_PARENTS:
-        obtain_method = f"Получается разведением (яйцо от {PRE_EVOLUTION_PARENTS[species_name].title()})"
-    else:
-        # Search direct encounters in Ultra Moon
-        encounters_url = f"https://pokeapi.co/api/v2/pokemon/{pokemon_id}/encounters"
-        locations = []
-        try:
-            encounters = fetch_json(encounters_url)
-            for enc in encounters:
-                location_raw = enc['location_area']['name'].replace("-", " ").title()
-                location_ru = translate_location(location_raw)
-                for v_detail in enc['version_details']:
-                    if v_detail['version']['name'] == 'ultra-moon':
-                        for details in v_detail['encounter_details']:
-                            method = details['method']['name']
-                            if method == 'walk':
-                                method_ru = "в траве"
-                            elif method == 'surf':
-                                method_ru = "на воде"
-                            elif method == 'gift':
-                                method_ru = "в подарок"
-                            elif 'rod' in method:
-                                method_ru = "рыбалка"
-                            else:
-                                method_ru = method
-                            locations.append(f"{location_ru} ({method_ru})")
-        except Exception:
-            pass
-
-        if locations:
-            locations = list(set(locations))
-            obtain_method = "Дикий покемон: " + ", ".join(locations[:3])
-        else:
-            from_species = species_data.get('evolves_from_species')
-            if from_species:
-                obtain_method = f"Эволюционирует из {clean_name(from_species['name'])}"
-            else:
-                if species_name in STARTER_SPECIES:
-                    obtain_method = "Стартовый покемон (в подарок на Маршруте 1)"
-                elif species_name in LEGENDARY_SPECIES:
-                    obtain_method = "Особая локация Ультра-пространства"
-                else:
-                    obtain_method = "Особый подарок от персонажей или эволюция"
-
-    # Sprites Artwork URL
-    image_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{pokemon_id}.png"
-
-    en_display_name = clean_name(species_name)
-    if is_alolan:
-        en_display_name = f"Alola {en_display_name}"
-
-    return {
-        "id": pokemon_id,
-        "species_id": species_id,
-        "dex_num": entry['entry_number'],
-        "name_en": en_display_name,
-        "name_ru": "", # Filled later from ru.json
-        "category": category,
-        "is_alolan": is_alolan,
-        "image": image_url,
-        "obtain": obtain_method
-    }
+STARTER_SPECIES = {
+    "bulbasaur", "ivysaur", "venusaur", "charmander", "charmeleon", "charizard", "squirtle", "wartortle", "blastoise",
+    "chikorita", "bayleef", "meganium", "cyndaquil", "quilava", "typhlosion", "totodile", "croconaw", "feraligatr",
+    "treecko", "grovyle", "sceptile", "torchic", "combusken", "blaziken", "mudkip", "marshtomp", "swampert",
+    "turtwig", "grotle", "torterra", "chimchar", "monferno", "infernape", "piplup", "prinplup", "empoleon",
+    "snivy", "servine", "serperior", "tepig", "pignite", "emboar", "oshawott", "dewott", "samurott",
+    "chespin", "quilladin", "chesnaught", "fennekin", "braixen", "delphox", "froakie", "frogadier", "greninja",
+    "rowlet", "dartrix", "decidueye", "litten", "torracat", "incineroar", "popplio", "brionne", "primarina",
+    "grookey", "thwackey", "rillaboom", "scorbunny", "raboot", "cinderace", "sobble", "drizzile", "inteleon",
+    "sprigatito", "floragato", "meowscarada", "fuecoco", "raboot", "skeledirge", "quaxly", "drizzile", "quaquaval"
+}
 
 def main():
     print("Downloading Russian names mapping...")
     ru_names_url = "https://raw.githubusercontent.com/sindresorhus/pokemon/main/data/ru.json"
     ru_names = fetch_json(ru_names_url)
-    
-    print("Fetching Alola Pokedex entries...")
-    pokedex = fetch_json("https://pokeapi.co/api/v2/pokedex/21/")
-    entries = pokedex.get('pokemon_entries', [])
-    
-    # Append EXTRA obtainable species caught via wormholes or island scan
-    print("Appending non-Alola obtainable species (Island Scan and Wormholes)...")
-    for species in EXTRA_UM_SPECIES:
-        already_in = False
-        for entry in entries:
-            if entry['pokemon_species']['name'] == species:
-                already_in = True
+
+    print("Fetching all Pokemon data from GraphQL...")
+    offset = 0
+    limit = 200
+    all_pokemon_data = []
+
+    while True:
+        print(f"Fetching offset {offset}...")
+        query = f"""
+        query {{
+          pokemon_v2_pokemon(offset: {offset}, limit: {limit}, order_by: {{id: asc}}) {{
+            id
+            name
+            is_default
+            pokemon_v2_pokemonspecy {{
+              id
+              name
+              is_legendary
+              is_mythical
+              is_baby
+            }}
+            pokemon_v2_encounters {{
+              pokemon_v2_version {{
+                name
+              }}
+              pokemon_v2_locationarea {{
+                name
+              }}
+              pokemon_v2_encounterslot {{
+                pokemon_v2_encountermethod {{
+                  name
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+
+        try:
+            res = graphql_query(query)
+            chunk = res.get('data', {}).get('pokemon_v2_pokemon', [])
+            if not chunk:
                 break
-        if not already_in:
-            entries.append({
-                "pokemon_species": {
-                    "name": species,
-                    "url": f"https://pokeapi.co/api/v2/pokemon-species/{species}/"
-                },
-                "entry_number": None
-            })
+            all_pokemon_data.extend(chunk)
+            offset += limit
             
-    print(f"Loaded {len(entries)} entries. Processing...")
-    
-    pokemon_list = []
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(get_pokemon_data, entry): entry for entry in entries}
-        for future in concurrent.futures.as_completed(futures):
-            res = future.result()
-            if res:
-                spec_id = res['species_id']
-                if 0 < spec_id <= len(ru_names):
-                    ru_name = ru_names[spec_id - 1]
-                    if res['is_alolan']:
-                        ru_name = f"Алола {ru_name}"
-                    res['name_ru'] = ru_name
-                else:
-                    res['name_ru'] = res['name_en']
-                pokemon_list.append(res)
-                print(f"Processed: {res['name_en']} ({res['name_ru']})")
+            # For testing, break early if needed
+            # if offset >= 1000: break
+        except Exception as e:
+            print(f"Failed to fetch chunk {offset}: {e}")
+            break
 
-    # Further translate evolved and pre-evolved parents names in obtain field
-    # We do this after compiling the complete pokemon_list so all translations are fully resolved!
-    print("Refining obtain method translations...")
-    for res in pokemon_list:
-        obtain = res['obtain']
-        if "Эволюционирует из" in obtain:
-            parent_eng = obtain.replace("Эволюционирует из ", "").strip().lower().replace(" ", "-")
-            parent_ru = None
-            for p in pokemon_list:
-                if p['name_en'].lower().replace(" ", "-") == parent_eng or p['name_en'].lower().replace(" ", "") == parent_eng.replace("-", ""):
-                    parent_ru = p['name_ru']
-                    break
-            if parent_ru:
-                res['obtain'] = f"Эволюция {parent_ru}"
-        elif "Получается разведением (яйцо от " in obtain:
-            parent_eng = obtain.replace("Получается разведением (яйцо от ", "").replace(")", "").strip().lower().replace(" ", "-")
-            parent_ru = None
-            for p in pokemon_list:
-                if p['name_en'].lower().replace(" ", "-") == parent_eng or p['name_en'].lower().replace(" ", "") == parent_eng.replace("-", ""):
-                    parent_ru = p['name_ru']
-                    break
-            if parent_ru:
-                res['obtain'] = f"Разведение (яйцо от {parent_ru})"
-
-    # Sort: Alola Regional Dex entries first, then extra entries in national ID order
-    pokemon_list.sort(key=lambda x: (0, x['dex_num']) if x['dex_num'] is not None else (1, x['id']))
+    print(f"Fetched {len(all_pokemon_data)} pokemons. Processing...")
     
-    # Export to data.json
+    
+    print("Fetching flavor texts to map species to versions for newer games...")
+    flavor_query = """
+    query {
+      pokemon_v2_pokemonspeciesflavortext(where: {language_id: {_eq: 9}}) {
+        pokemon_species_id
+        pokemon_v2_version {
+          name
+        }
+      }
+    }
+    """
+    try:
+        flavor_res = graphql_query(flavor_query)
+        flavors = flavor_res.get('data', {}).get('pokemon_v2_pokemonspeciesflavortext', [])
+        species_to_games = {}
+        for item in flavors:
+            sid = item['pokemon_species_id']
+            v_name = item['pokemon_v2_version']['name']
+            if sid not in species_to_games:
+                species_to_games[sid] = set()
+            species_to_games[sid].add(v_name)
+    except Exception as e:
+        print(f"Failed to fetch flavor texts: {e}")
+        species_to_games = {}
+
+    final_list = []
+
+    for p in all_pokemon_data:
+        specy = p['pokemon_v2_pokemonspecy']
+        if not specy:
+            continue
+
+        species_name = specy['name']
+        species_id = specy['id']
+        pokemon_id = p['id']
+
+        # Name
+        en_name = p['name'].replace("-", " ").title()
+        ru_name = en_name
+        if 0 < species_id <= len(ru_names):
+            ru_name = ru_names[species_id - 1]
+            if "alola" in p['name']:
+                ru_name = f"Алола {ru_name}"
+            elif "galar" in p['name']:
+                ru_name = f"Галар {ru_name}"
+            elif "hisui" in p['name']:
+                ru_name = f"Хисуи {ru_name}"
+            elif "paldea" in p['name']:
+                ru_name = f"Палдея {ru_name}"
+
+        # Category
+        category = "Обычный"
+        if specy['is_mythical']:
+            category = "Мифический"
+        elif specy['is_legendary']:
+            category = "Легендарный"
+        elif species_name in STARTER_SPECIES:
+            category = "Стартовый"
+
+        # Image
+        image_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{pokemon_id}.png"
+
+        # Encounters
+        encounters_dict = {}
+        for enc in p.get('pokemon_v2_encounters', []):
+            v_name = enc['pokemon_v2_version']['name']
+            loc_name = translate_location(enc['pokemon_v2_locationarea']['name'])
+            method_name = translate_method(enc['pokemon_v2_encounterslot']['pokemon_v2_encountermethod']['name'])
+
+            enc_str = f"{loc_name} ({method_name})"
+
+            if v_name not in encounters_dict:
+                encounters_dict[v_name] = []
+
+            if enc_str not in encounters_dict[v_name]:
+                encounters_dict[v_name].append(enc_str)
+
+        # Join multiple encounters per version
+        for v, elist in encounters_dict.items():
+            encounters_dict[v] = ", ".join(elist[:3]) + ("" if len(elist) <= 3 else " и др.")
+
+
+        # Fallback for newer games via flavor text (Pokedex entries)
+        if species_id in species_to_games:
+            for v_name in species_to_games[species_id]:
+                if v_name not in encounters_dict:
+                    encounters_dict[v_name] = "Эволюция, специальное получение или перенос"
+
+        final_list.append({
+            "id": pokemon_id,
+            "name_en": en_name,
+            "name_ru": ru_name,
+            "category": category,
+            "image": image_url,
+            "encounters": encounters_dict
+        })
+
+    print(f"Total processed: {len(final_list)}")
+    
     with open("pokemon_data.json", "w", encoding="utf-8") as f:
-        json.dump(pokemon_list, f, ensure_ascii=False, indent=2)
-    print(f"Database compiled! Total Pokémon: {len(pokemon_list)}")
+        json.dump(final_list, f, ensure_ascii=False, indent=2)
 
-    # If index.html exists, inject data directly
     if os.path.exists("index.html"):
         print("Injecting database into index.html...")
         with open("index.html", "r", encoding="utf-8") as f:
             html_content = f.read()
         
-        new_data_str = f"const pokemonData = {json.dumps(pokemon_list, ensure_ascii=False)};"
-        pattern = r"const pokemonData = \[\];\s*//\s*DATA_PLACEHOLDER"
+        new_data_str = f"const pokemonData = {json.dumps(final_list, ensure_ascii=False)};"
+        pattern = r"const pokemonData = \[.*?\];"
         
-        updated_html = re.sub(pattern, new_data_str, html_content)
+        updated_html = re.sub(pattern, new_data_str, html_content, flags=re.DOTALL)
         
         with open("index.html", "w", encoding="utf-8") as f:
             f.write(updated_html)
